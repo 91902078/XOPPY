@@ -271,6 +271,7 @@ def calc1d_srw(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergyPoi
         resonance_energy = m2ev / resonance_wavelength
 
         srw_max_harmonic_number = int(photonEnergyMax / resonance_energy * 1.1)
+        srw_max_harmonic_number *= 3 #srio increased 2019-01-22
         print ("Max harmonic considered:%d ; Resonance energy: %g eV\n"%(srw_max_harmonic_number,resonance_energy))
 
 
@@ -1400,7 +1401,7 @@ def calc3d_srw(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergyPoi
 
 
 
-def calc3d_urgent(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergyPoints=500,
+def calc3d_urgent(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergyPoints=500,photonEnergyArray=None,
                   zero_emittance=False,hSlitPoints=50,vSlitPoints=50,
                   fileName=None,fileAppend=False,):
 
@@ -1423,20 +1424,31 @@ def calc3d_urgent(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergy
             fout = open(fileName,"w")
             fout.write("#F "+fileName+"\n")
 
-    if photonEnergyPoints == 1:
-        eStep = 0.0
+    if photonEnergyArray is None:
+        if photonEnergyPoints == 1:
+            eStep = 0.0
+        else:
+            eStep = (photonEnergyMax-photonEnergyMin)/(photonEnergyPoints-1)
+
+        eArray = numpy.zeros( photonEnergyPoints )
+        for iEner in range(photonEnergyPoints):
+            ener = photonEnergyMin + iEner*eStep
+            eArray[iEner] = ener
     else:
-        eStep = (photonEnergyMax-photonEnergyMin)/(photonEnergyPoints-1)
-    eArray = numpy.zeros( photonEnergyPoints )
+        eArray = photonEnergyArray
+
+        photonEnergyMin = eArray[0]
+        photonEnergyMax = eArray[-1]
+        photonEnergyPoints = photonEnergyArray.size
+
     intensArray = numpy.zeros( photonEnergyPoints )
     hArray = numpy.zeros( (hSlitPoints*2-1) )
     vArray = numpy.zeros( (vSlitPoints*2-1) )
     int_mesh2integrated = numpy.zeros( (hSlitPoints*2-1,vSlitPoints*2-1) )
     int_mesh3 = numpy.zeros( (photonEnergyPoints,hSlitPoints*2-1,vSlitPoints*2-1) )
 
-    for iEner in range(photonEnergyPoints):
-        ener = photonEnergyMin + iEner*eStep
-        eArray[iEner] = ener
+    for iEner in range(eArray.size):
+        ener = eArray[iEner]
 
         for file in ["urgent.inp","urgent.out"]:
             try:
@@ -1555,20 +1567,20 @@ def calc3d_urgent(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergy
             fout.write("#UD vSlitPoints =  %f\n"%(vSlitPoints))
             fout.write("#N 3\n")
             fout.write("#L  H[mm]  V[mm]  Flux[phot/s/0.1%bw/mm^2]\n")
+        if iEner == 0:
+            eStep = 0.0 # eArray[1]-eArray[0] # use like next one
+        else:
+            eStep = eArray[iEner]-eArray[iEner-1]
         for i in range(len(hArray)):
             for j in range(len(vArray)):
                if fileName is not None: fout.write("%f  %f  %f\n"%(hArray[i],vArray[j],int_mesh2[i,j]) )
                int_mesh3[iEner,i,j] = int_mesh2[i,j]
-               int_mesh2integrated[i,j] += int_mesh2[i,j]
+               int_mesh2integrated[i,j] += int_mesh2[i,j] *codata.e*1e3 * eStep # convert from phot/s/0,1%bw/mm2 to W/mm^2
                totIntens += int_mesh2[i,j]
 
         totIntens = totIntens * (hh[1]-hh[0]) * (vv[1]-vv[0])
         intensArray[iEner] = totIntens
 
-
-    # now dump the integrated power
-    # convert from phot/s/0,1%bw/mm2 to W/mm^2
-    int_mesh2integrated = int_mesh2integrated *codata.e*1e3 * eStep
 
     if fileName is not None:
         scanCounter += 1
@@ -1583,9 +1595,10 @@ def calc3d_urgent(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergy
         for i in range(len(hArray)):
             for j in range(len(vArray)):
                 fout.write("%f  %f  %f\n"%(hArray[i],vArray[j],int_mesh2integrated[i,j]) )
-        #print(">>>>>>>>>>>>>>>power1",int_mesh2integrated.sum()*(hArray[1]-hArray[0])*(vArray[1]-vArray[0]))
-        #print(">>>>>>>>>>>>>>>power2",intensArray.sum()*codata.e*1e3*(eArray[1]-eArray[0]))
-        #print(">>>>>>>>>>>>>>>power3",int_mesh3.sum()*codata.e*1e3*(eArray[1]-eArray[0])*(hArray[1]-hArray[0])*(vArray[1]-vArray[0]))
+        # integrate in E using trapeze rule
+        print(">>>>>>>>>>>>>>>power1",int_mesh2integrated.sum()*(hArray[1]-hArray[0])*(vArray[1]-vArray[0]))
+        print(">>>>>>>>>>>>>>>power2",numpy.trapz(intensArray*codata.e*1e3,eArray))
+        print(">>>>>>>>>>>>>>>power3",numpy.trapz(int_mesh3.sum(axis=-1).sum(axis=-1)*codata.e*1e3*(hArray[1]-hArray[0])*(vArray[1]-vArray[0]),eArray))
 
         # now dump the spectrum as the sum
         scanCounter += 1
@@ -1610,16 +1623,19 @@ def calc3d_urgent(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergy
 
     print("\n--------------------------------------------------------\n\n")
     # append direct calculation for comparison
+
+    print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> ENERGY ",photonEnergyMin,photonEnergyMax,photonEnergyPoints)
     tmp = calc1d_urgent(bl,photonEnergyMin=photonEnergyMin,
                   photonEnergyMax=photonEnergyMax,
                   photonEnergyPoints=photonEnergyPoints,
                   fileName=fileName,fileAppend=True)
+    print(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> ENERGY ", photonEnergyMin, photonEnergyMax, photonEnergyPoints)
     # return abscissas in mm
     return  (eArray, hArray, vArray, int_mesh3)
 
 
 
-def calc3d_us(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergyPoints=500,
+def calc3d_us(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergyPoints=500,photonEnergyArray=None,
               zero_emittance=False,hSlitPoints=50,vSlitPoints=50,
               fileName=None,fileAppend=True,):
 
@@ -1643,11 +1659,32 @@ def calc3d_us(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergyPoin
             fout = open(fileName,"w")
             fout.write("#F "+fileName+"\n")
 
-    if photonEnergyPoints == 1:
-        eStep = 0.0
+#####################
+    if photonEnergyArray is None:
+        if photonEnergyPoints == 1:
+            eStep = 0.0
+        else:
+            eStep = (photonEnergyMax-photonEnergyMin)/(photonEnergyPoints-1)
+
+        eArray = numpy.zeros( photonEnergyPoints )
+        for iEner in range(photonEnergyPoints):
+            ener = photonEnergyMin + iEner*eStep
+            eArray[iEner] = ener
     else:
-        eStep = (photonEnergyMax-photonEnergyMin)/(photonEnergyPoints-1)
-    eArray = numpy.zeros( photonEnergyPoints )
+        eArray = photonEnergyArray
+
+        photonEnergyMin = eArray[0]
+        photonEnergyMax = eArray[-1]
+        photonEnergyPoints = photonEnergyArray.size
+######################
+
+    # if photonEnergyPoints == 1:
+    #     eStep = 0.0
+    # else:
+    #     eStep = (photonEnergyMax-photonEnergyMin)/(photonEnergyPoints-1)
+    # eArray = numpy.zeros( photonEnergyPoints )
+
+
     intensArray = numpy.zeros( photonEnergyPoints )
     hArray = numpy.zeros( (hSlitPoints*2-1) )
     vArray = numpy.zeros( (vSlitPoints*2-1) )
@@ -1655,8 +1692,8 @@ def calc3d_us(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergyPoin
     int_mesh3 = numpy.zeros( (photonEnergyPoints,hSlitPoints*2-1,vSlitPoints*2-1) )
 
     for iEner in range(photonEnergyPoints):
-        ener = photonEnergyMin + iEner*eStep
-        eArray[iEner] = ener
+        # ener = photonEnergyMin + iEner*eStep
+        ener = eArray[iEner]
 
         for file in ["us.inp","us.out"]:
             try:
@@ -1768,9 +1805,13 @@ def calc3d_us(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergyPoin
                 for j in range(len(vArray)):
                    if fileName is not None:
                        fout.write("%f  %f  %f\n"%(hArray[i],vArray[j],int_mesh2[i,j]) )
+                   if iEner == 0:
+                       eStep = 0.0  # eArray[1]-eArray[0] # use like next one
+                   else:
+                       eStep = eArray[iEner] - eArray[iEner - 1]
                    if numpy.isfinite(int_mesh2.sum()):
                        int_mesh3[iEner,i,j] = int_mesh2[i,j]
-                       int_mesh2integrated[i,j] += int_mesh2[i,j]
+                       int_mesh2integrated[i,j] += int_mesh2[i,j] *codata.e*1e3 * eStep # # convert from phot/s/0,1%bw/mm2 to W/mm^2
                        totIntens += int_mesh2[i,j]
 
         totIntens = totIntens * (hh[1]-hh[0]) * (vv[1]-vv[0])
@@ -1779,12 +1820,16 @@ def calc3d_us(bl,photonEnergyMin=3000.0,photonEnergyMax=55000.0,photonEnergyPoin
 
     # now dump the integrated power
     # convert from phot/s/0,1%bw/mm2 to W/mm^2
-    int_mesh2integrated = int_mesh2integrated *codata.e*1e3 * eStep
+    # int_mesh2integrated = int_mesh2integrated *codata.e*1e3 * eStep
 
-    # print(">>>>>>>>>>>>>>>power1",int_mesh2integrated.sum()*(hArray[1]-hArray[0])*(vArray[1]-vArray[0]))
-    # if photonEnergyPoints > 1:
-    #     print(">>>>>>>>>>>>>>>power2",intensArray.sum()*codata.e*1e3*(eArray[1]-eArray[0]))
-    #     print(">>>>>>>>>>>>>>>power3",int_mesh3.sum()*codata.e*1e3*(eArray[1]-eArray[0])*(hArray[1]-hArray[0])*(vArray[1]-vArray[0]))
+    print(">>>>>>>>>>>>>>>power1",int_mesh2integrated.sum()*(hArray[1]-hArray[0])*(vArray[1]-vArray[0]))
+    if photonEnergyPoints > 1:
+        # print(">>>>>>>>>>>>>>>power2",intensArray.sum()*codata.e*1e3*(eArray[1]-eArray[0]))
+        # print(">>>>>>>>>>>>>>>power3",int_mesh3.sum()*codata.e*1e3*(eArray[1]-eArray[0])*(hArray[1]-hArray[0])*(vArray[1]-vArray[0]))
+        print(">>>>>>>>>>>>>>>power2",numpy.trapz(intensArray*codata.e*1e3,eArray))
+        print(">>>>>>>>>>>>>>>power3",numpy.trapz(int_mesh3.sum(axis=-1).sum(axis=-1)*codata.e*1e3*(hArray[1]-hArray[0])*(vArray[1]-vArray[0]),eArray))
+
+
 
     if fileName is not None:
         scanCounter += 1
@@ -2616,7 +2661,7 @@ def main(radiance=True,flux=True,flux_from_3d=True,power_density=True):
     #
 
     if radiance:
-        out = compare_radiation(beamline,zero_emittance=zero_emittance,npoints_grid=101,energy=None)
+        out = compare_radiation(beamline,zero_emittance=zero_emittance,npoints_grid=101)
         plot_radiation(out)
 
 
@@ -2641,4 +2686,4 @@ def main(radiance=True,flux=True,flux_from_3d=True,power_density=True):
         plot_power_density(out)
 
 if __name__ == '__main__':
-    main(radiance=True,flux=False,flux_from_3d=False,power_density=False)
+    main(radiance=False,flux=True,flux_from_3d=False,power_density=False)

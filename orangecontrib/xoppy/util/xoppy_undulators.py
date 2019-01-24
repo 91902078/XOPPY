@@ -77,8 +77,8 @@ def xoppy_calc_undulator_spectrum(ELECTRONENERGY=6.04,ELECTRONENERGYSPREAD=0.001
         print("Done")
         print("\nCheck calculation output at: %s"%(os.path.join(os.getcwd(),"urgent.out")))
     if METHOD == 2:
-        # get the maximum harmonic number
-        h_max = int(1.1*PHOTONENERGYMAX/resonance_energy)
+        # get the maximum harmonic number - srio increased it a factor of 2!
+        h_max = int(2*1.1*PHOTONENERGYMAX/resonance_energy)
 
         print ("Number of harmonics considered: %d \n"%(h_max))
         print("Undulator flux calculation using SRW. Please wait...")
@@ -97,7 +97,7 @@ def xoppy_calc_undulator_spectrum(ELECTRONENERGY=6.04,ELECTRONENERGYSPREAD=0.001
     print("\nRatio Power from integral of spectrum over Total emitted power: %5.4f"%(power_in_spectrum / ptot))
 
     spectral_power = f * codata.e * 1e3
-    cumulated_power = spectral_power.cumsum() * numpy.abs(e[0] - e[1]) if not METHOD == 1 else 0.0
+    cumulated_power = spectral_power.cumsum() * numpy.abs(e[0] - e[1])
 
     return e, f, spectral_power, cumulated_power
 
@@ -255,7 +255,8 @@ def xoppy_calc_undulator_radiation(ELECTRONENERGY=6.04,ELECTRONENERGYSPREAD=0.00
                                        HSLITPOINTS=41,VSLITPOINTS=41,METHOD=2,
                                        PHOTONENERGYMIN=7982.2,PHOTONENERGYMAX=7983.2,PHOTONENERGYPOINTS=2,
                                        USEEMITTANCES=1,
-                                       h5_file="",h5_entry_name="XOPPY_RADIATION",h5_initialize=True,h5_parameters={}):
+                                       h5_file="",h5_entry_name="XOPPY_RADIATION",h5_initialize=True,h5_parameters={},
+                                       photon_energy_axis_with_adapted_step=False):
     print("Inside xoppy_calc_undulator_radiation. ")
 
     bl = OrderedDict()
@@ -277,6 +278,67 @@ def xoppy_calc_undulator_radiation(ELECTRONENERGY=6.04,ELECTRONENERGYSPREAD=0.00
         zero_emittance = False
     else:
         zero_emittance = True
+
+
+    ####################################################################################################################
+    if photon_energy_axis_with_adapted_step:
+        #
+        # spectrum
+        #
+        energies, flux_through_finite_aperture, spectral_power, cumulated_power = xoppy_calc_undulator_spectrum(
+                        ELECTRONENERGY=ELECTRONENERGY,
+                        ELECTRONENERGYSPREAD=ELECTRONENERGYSPREAD,
+                        ELECTRONCURRENT=ELECTRONCURRENT,
+                        ELECTRONBEAMSIZEH=ELECTRONBEAMSIZEH,
+                        ELECTRONBEAMSIZEV=ELECTRONBEAMSIZEV,
+                        ELECTRONBEAMDIVERGENCEH=ELECTRONBEAMDIVERGENCEH,
+                        ELECTRONBEAMDIVERGENCEV=ELECTRONBEAMDIVERGENCEV,
+                        PERIODID=PERIODID,
+                        NPERIODS=NPERIODS,
+                        KV=KV,
+                        DISTANCE=DISTANCE,
+                        GAPH=GAPH,
+                        GAPV=GAPV,
+                        METHOD=METHOD,
+                        PHOTONENERGYMIN=PHOTONENERGYMIN,
+                        PHOTONENERGYMAX=PHOTONENERGYMAX,
+                        PHOTONENERGYPOINTS=PHOTONENERGYPOINTS * 10,
+                        USEEMITTANCES=USEEMITTANCES,
+                                        )
+
+        plot(energies,cumulated_power)
+        # total_power = cumulated_power[-1]
+        # good = numpy.where(cumulated_power <= total_power)
+        # energies = energies[good]
+        # cumulated_power = cumulated_power[good]
+
+        interpolated_cumulated_power = numpy.linspace(start=0, stop=cumulated_power[-1], num=PHOTONENERGYPOINTS)
+        # power_values = power_values[1:]  # interpolating power=0 doesn't make sense
+        # power_step = power_values[1] - power_values[0]
+
+
+
+
+        interpolated_upper_energies = numpy.interp(interpolated_cumulated_power, cumulated_power, energies)
+
+
+
+        if False:
+            cumpower_new = numpy.interp(interpolated_upper_energies, energies, cumulated_power)
+            plot(energies, cumulated_power, interpolated_upper_energies, cumpower_new)
+            print((cumpower_new),cumulated_power[-1])
+            for i in range(cumpower_new.size-1):
+                print(cumpower_new[i+1]-cumpower_new[i])
+
+        print("Watts in one bin: ",cumulated_power[-1]/(energies.size*10-1))
+        plot(energies, cumulated_power,
+             interpolated_upper_energies, interpolated_cumulated_power, legend=["original", "interpolated"])
+
+        photonEnergyArray = interpolated_upper_energies
+    ####################################################################################################################
+    else:
+        photonEnergyArray = numpy.linspace(PHOTONENERGYMIN, PHOTONENERGYMAX, PHOTONENERGYPOINTS)
+
 
     gamma = ELECTRONENERGY / (codata_mee * 1e-3)
 
@@ -301,6 +363,7 @@ def xoppy_calc_undulator_radiation(ELECTRONENERGY=6.04,ELECTRONENERGYSPREAD=0.00
         photonEnergyMin = resonance_energy
         photonEnergyMax = resonance_energy + 1
         photonEnergyPoints = 2
+
 
     # autoset slit
 
@@ -327,15 +390,21 @@ def xoppy_calc_undulator_radiation(ELECTRONENERGY=6.04,ELECTRONENERGYSPREAD=0.00
     if METHOD == 0:
         code = "US"
         print("Undulator radiation calculation using US. Please wait...")
+        # e,h,v,p = srundplug.calc3d_us(bl,fileName=outFile,fileAppend=False,hSlitPoints=HSLITPOINTS,vSlitPoints=VSLITPOINTS,
+                                    # photonEnergyMin=photonEnergyMin,photonEnergyMax=photonEnergyMax,
+                                    # photonEnergyPoints=photonEnergyPoints,zero_emittance=zero_emittance)
         e,h,v,p = srundplug.calc3d_us(bl,fileName=outFile,fileAppend=False,hSlitPoints=HSLITPOINTS,vSlitPoints=VSLITPOINTS,
-                                    photonEnergyMin=photonEnergyMin,photonEnergyMax=photonEnergyMax,
-                                    photonEnergyPoints=photonEnergyPoints,zero_emittance=zero_emittance)
+                                    photonEnergyArray=photonEnergyArray,
+                                    zero_emittance=zero_emittance)
     if METHOD == 1:
         code = "URGENT"
         print("Undulator radiation calculation using URGENT. Please wait...")
         e,h,v,p = srundplug.calc3d_urgent(bl,fileName=outFile,fileAppend=False,hSlitPoints=HSLITPOINTS,vSlitPoints=VSLITPOINTS,
-                                    photonEnergyMin=photonEnergyMin,photonEnergyMax=photonEnergyMax,
-                                    photonEnergyPoints=photonEnergyPoints,zero_emittance=zero_emittance)
+                                    photonEnergyArray=photonEnergyArray,
+                                    zero_emittance=zero_emittance)
+        # e,h,v,p = srundplug.calc3d_urgent(bl,fileName=outFile,fileAppend=False,hSlitPoints=HSLITPOINTS,vSlitPoints=VSLITPOINTS,
+        #                             photonEnergyMin=photonEnergyMin,photonEnergyMax=photonEnergyMax,
+        #                             photonEnergyPoints=photonEnergyPoints,zero_emittance=zero_emittance)
     if METHOD == 2:
         code = "SRW"
         print("Undulator radiation calculation using SRW. Please wait...")
@@ -376,6 +445,7 @@ def xoppy_calc_undulator_radiation(ELECTRONENERGY=6.04,ELECTRONENERGYSPREAD=0.00
 
     if SETRESONANCE == 0:
         pcalc =  p.sum() * codata.e * 1e3 * (h[1]-h[0]) * (v[1]-v[0]) * (e[1]-e[0])
+        pcalc = numpy.trapz(p.sum(axis=-1).sum(axis=-1) * codata.e * 1e3 * (h[1] - h[0]) * (v[1] - v[0]),e)
         print ("\nTotal power from calculated spectrum (h,v,energy) grid [W]: %f \n"%pcalc)
 
 
@@ -421,11 +491,111 @@ if __name__ == "__main__":
 
     from srxraylib.plot.gol import plot,plot_image
 
-    e, f, spectral_power, cumulated_power = xoppy_calc_undulator_spectrum()
-    plot(e,f)
+    # e, f, spectral_power, cumulated_power = xoppy_calc_undulator_spectrum()
+    # plot(e,f)
+    #
+    # h, v, p, code = xoppy_calc_undulator_power_density(h5_file="test.h5",h5_initialize=True)
+    # plot_image(p,h,v)
+    #
+    # e, h, v, p, code = xoppy_calc_undulator_radiation(ELECTRONENERGY=6.0, h5_file="test.h5",h5_entry_name="first_entry",h5_initialize=True)
+    # e, h, v, p, code = xoppy_calc_undulator_radiation(ELECTRONENERGY=7.0, h5_file="test.h5",h5_entry_name="second_entry",h5_initialize=False)
 
-    h, v, p, code = xoppy_calc_undulator_power_density(h5_file="test.h5",h5_initialize=True)
-    plot_image(p,h,v)
 
-    e, h, v, p, code = xoppy_calc_undulator_radiation(ELECTRONENERGY=6.0, h5_file="test.h5",h5_entry_name="first_entry",h5_initialize=True)
-    e, h, v, p, code = xoppy_calc_undulator_radiation(ELECTRONENERGY=7.0, h5_file="test.h5",h5_entry_name="second_entry",h5_initialize=False)
+    # #
+    # # spectrum
+    # #
+    # energies, flux_through_finite_aperture, spectral_power, cumulated_power = xoppy_calc_undulator_spectrum(
+    #                 ELECTRONENERGY=6.04,
+    #                 ELECTRONENERGYSPREAD=0.001,
+    #                 ELECTRONCURRENT=0.2,
+    #                 ELECTRONBEAMSIZEH=0.000395,
+    #                 ELECTRONBEAMSIZEV=9.9e-06,
+    #                 ELECTRONBEAMDIVERGENCEH=1.05e-05,
+    #                 ELECTRONBEAMDIVERGENCEV=3.9e-06,
+    #                 PERIODID=0.018,
+    #                 NPERIODS=222,
+    #                 KV=1.68,
+    #                 DISTANCE=30.0,
+    #                 GAPH=0.003,
+    #                 GAPV=0.003,
+    #                 METHOD=1,
+    #                 PHOTONENERGYMIN=6000.0,
+    #                 PHOTONENERGYMAX=8500.0,
+    #                 PHOTONENERGYPOINTS=20  * 10,
+    #                 USEEMITTANCES=1,
+    #                                 )
+    #
+    # plot(energies,cumulated_power)
+    # # total_power = cumulated_power[-1]
+    # # good = numpy.where(cumulated_power <= total_power)
+    # # energies = energies[good]
+    # # cumulated_power = cumulated_power[good]
+    #
+    # interpolated_cumulated_power = numpy.linspace(start=0, stop=cumulated_power[-1], num=energies.size * 10)
+    # # power_values = power_values[1:]  # interpolating power=0 doesn't make sense
+    # # power_step = power_values[1] - power_values[0]
+    #
+    #
+    #
+    #
+    # interpolated_upper_energies = numpy.interp(interpolated_cumulated_power, cumulated_power, energies)
+    #
+    #
+    # if False:
+    #     cumpower_new = numpy.interp(interpolated_upper_energies, energies, cumulated_power)
+    #     plot(energies, cumulated_power, interpolated_upper_energies, cumpower_new)
+    #     print((cumpower_new),cumulated_power[-1])
+    #     for i in range(cumpower_new.size-1):
+    #         print(cumpower_new[i+1]-cumpower_new[i])
+    #
+    # print("Watts in one bin: ",cumulated_power[-1]/(energies.size*10-1))
+    # plot(energies, cumulated_power,
+    #      interpolated_upper_energies, interpolated_cumulated_power, legend=["original", "interpolated"])
+
+
+    #
+    # radiation
+    #
+
+
+
+    e, h, v, p, code = xoppy_calc_undulator_radiation(
+            ELECTRONENERGY           = 6.04,
+            ELECTRONENERGYSPREAD     = 0.001,
+            ELECTRONCURRENT          = 0.2,
+            ELECTRONBEAMSIZEH        = 0.000395,
+            ELECTRONBEAMSIZEV        = 9.9e-06,
+            ELECTRONBEAMDIVERGENCEH  = 1.05e-05,
+            ELECTRONBEAMDIVERGENCEV  = 3.9e-06,
+            PERIODID                 = 0.018,
+            NPERIODS                 = 222,
+            KV                       = 1.68,
+            DISTANCE                 = 30.0,
+            SETRESONANCE             = 0, ################
+            HARMONICNUMBER           = 1, ################
+            GAPH                     = 0.003,
+            GAPV                     = 0.003,
+            HSLITPOINTS              = 41, ############
+            VSLITPOINTS              = 41, ############
+            METHOD                   = 1,
+            PHOTONENERGYMIN          = 6000.0,
+            PHOTONENERGYMAX          = 8500.0,
+            PHOTONENERGYPOINTS       = 50,
+            USEEMITTANCES            = 1,
+            h5_file                  = "undulator_radiation.h5",
+            h5_entry_name            = "XOPPY_RADIATION",
+            h5_initialize            = True,
+            photon_energy_axis_with_adapted_step = False
+            )
+
+    rad_cumulated_power = (p.sum(axis=-1).sum(axis=-1)).cumsum()
+    rad_cumulated_power /= rad_cumulated_power.max()
+    plot(e,rad_cumulated_power,title="cumulated power (from radiation)",marker='o')
+
+    print(numpy.diff(e))
+
+
+    #
+    # call with predefined energy array
+    #
+
